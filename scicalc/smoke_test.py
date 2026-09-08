@@ -33,6 +33,13 @@ def main() -> None:
     win = app_main.CalculatorWindow()
     win.show()
 
+    # 测试确定性:显式设定初始状态,不依赖上次运行遗留的持久化设置
+    win._angle = "DEG"
+    win._angle_btn.setText("DEG")
+    win._history.clear_all()
+    win._memory_clear()
+    win._clear()
+
     # 1. 基本四则与括号:7×(5+3) = 56
     for t in ("7", "×", "(", "5", "+", "3", ")"):
         win._insert(t)
@@ -144,6 +151,71 @@ def main() -> None:
     # 14. 复制
     win._copy_result()
     check(QApplication.clipboard().text() == "4", "复制结果到剪贴板")
+
+    # 15. 函数图像窗口
+    import plot as plot_mod
+
+    win._open_graph()
+    check(win._graph_window is not None, "图像窗口已创建")
+    gw = win._graph_window
+    gw.show()
+    gw._replot()
+
+    # 默认输入:二次函数(显函数)
+    check(len(gw._curves) == 1 and gw._curves[0].kind == plot_mod.EXPLICIT,
+          f"默认输入应识别为显函数,实际 {[c.kind for c in gw._curves]}")
+    check(sum(len(s.polylines) for s in gw._canvas._samples) > 0, "二次函数采样出折线")
+
+    # 圆(隐函数)
+    gw._apply_example("x^2 + y^2 = 25")
+    check(gw._curves[0].kind == plot_mod.IMPLICIT, "圆应识别为隐函数")
+    check(len(gw._canvas._samples[0].segments) > 50,
+          f"圆应产生轮廓线段,实际 {len(gw._canvas._samples[0].segments)}")
+
+    # 双曲线(隐函数)
+    gw._apply_example("x^2/4 - y^2/9 = 1")
+    check(gw._curves[0].kind == plot_mod.IMPLICIT and len(gw._canvas._samples[0].segments) > 20,
+          "双曲线应产生轮廓线段")
+
+    # 参数方程
+    gw._apply_example("x = 3cos(t), y = 2sin(t)")
+    check(gw._curves[0].kind == plot_mod.PARAMETRIC, "参数方程识别")
+    check(sum(len(p) for p in gw._canvas._samples[0].polylines) > 1000, "参数椭圆采样点充足")
+
+    # 极坐标
+    gw._apply_example("r = 1 - sin(θ)")
+    check(gw._curves[0].kind == plot_mod.POLAR, "极坐标识别")
+    check(len(gw._canvas._samples[0].polylines) >= 1, "心形线采样出折线")
+
+    # 多曲线 + 错误提示
+    gw._input.setPlainText("y=sin(x)\ny=cos(x)\n乱写乱写")
+    gw._replot()
+    check(len(gw._curves) == 2, f"多曲线解析得到 {len(gw._curves)} 条(期望 2)")
+    check("第 3 行" in gw._status.text(), f"错误行提示:{gw._status.text()!r}")
+
+    # 缩放 / 平移 / 重置视图
+    view_before = gw._canvas.view
+    gw._canvas._view = view_before.scaled(0.5, 0.0, 0.0).with_aspect(
+        gw._canvas.width(), gw._canvas.height())
+    check(abs(gw._canvas.view.width - view_before.width * 0.5) < 1e-6, "缩放改变视口宽度")
+    gw._canvas.reset_view()
+    check(abs(gw._canvas.view.width - 20.0) < 1e-6,
+          f"重置视图宽度应为 20,实际 {gw._canvas.view.width}")
+
+    # 渲染:画布上应出现网格 / 坐标轴 / 曲线等多种颜色
+    image = gw._canvas.grab().toImage()
+    check(image.width() > 100 and image.height() > 100, "画布渲染尺寸正常")
+    colors_seen = set()
+    for y_px in range(0, image.height(), 7):
+        for x_px in range(0, image.width(), 7):
+            colors_seen.add(image.pixel(x_px, y_px))
+    check(len(colors_seen) > 5, f"画布应出现多种颜色,实际 {len(colors_seen)} 种")
+
+    # 主题同步
+    win.apply_theme("dark")
+    check(gw._theme_name == "dark", "图像窗口跟随主窗口切换深色")
+    win.apply_theme("light")
+    check(gw._theme_name == "light", "图像窗口跟随主窗口切回浅色")
 
     # 恢复默认设置,避免测试残留
     win._settings.setValue("theme", "light")

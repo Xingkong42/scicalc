@@ -241,6 +241,7 @@ class CalculatorWindow(QWidget):
         self._second = False          # 2nd 键状态
         self._last_result = 0.0       # ans
         self._sci_specs: list[dict] = []   # 2nd 可切换的按键
+        self._graph_window = None     # 函数图像窗口(按需创建)
 
         # ---- 布局 ----
         central = QHBoxLayout(self)
@@ -311,6 +312,14 @@ class CalculatorWindow(QWidget):
         self._hist_btn.setIconSize(QSize(16, 16))
         self._hist_btn.clicked.connect(self._toggle_history)
         lay.addWidget(self._hist_btn)
+
+        self._graph_btn = QPushButton(" 图像")
+        self._graph_btn.setObjectName("ToolBtn")
+        self._graph_btn.setCursor(Qt.PointingHandCursor)
+        self._graph_btn.setIconSize(QSize(16, 16))
+        self._graph_btn.setToolTip("绘制函数图像(显函数 / 隐函数 / 参数方程 / 极坐标)")
+        self._graph_btn.clicked.connect(self._open_graph)
+        lay.addWidget(self._graph_btn)
 
         lay.addStretch(1)
 
@@ -678,6 +687,15 @@ class CalculatorWindow(QWidget):
         self._history.setVisible(visible)
         self._settings.setValue("hist_visible", visible)
 
+    def _open_graph(self) -> None:
+        """打开(或前置)函数图像窗口"""
+        if self._graph_window is None:
+            from graph_window import GraphWindow      # 延迟导入,加快启动
+            self._graph_window = GraphWindow(self._theme_name)
+        self._graph_window.show()
+        self._graph_window.raise_()
+        self._graph_window.activateWindow()
+
     def _toggle_angle(self) -> None:
         self._angle = "RAD" if self._angle == "DEG" else "DEG"
         self._settings.setValue("angle", self._angle)
@@ -710,9 +728,12 @@ class CalculatorWindow(QWidget):
         # 主题变化后刷新随主题着色的图标与文字
         t = theme.THEMES[self._theme_name]
         self._hist_btn.setIcon(appicon.make_glyph_icon("history", t["text2"]))
+        self._graph_btn.setIcon(appicon.make_glyph_icon("graph", t["text2"]))
         self._copy_btn.setIcon(appicon.make_glyph_icon("copy", t["text2"]))
         self._theme_btn.setIcon(appicon.make_glyph_icon("theme", t["text2"]))
         self._angle_btn.setText(self._angle)
+        if self._graph_window is not None:
+            self._graph_window.apply_theme(self._theme_name)
         self._after_memory_change()
         self._update_display()
 
@@ -777,6 +798,8 @@ class CalculatorWindow(QWidget):
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.setValue("memory", self._memory)
         self._settings.setValue("hist_visible", self._history.isVisible())
+        if self._graph_window is not None:
+            self._graph_window.close()          # 主窗口关闭时一并关闭图像窗口
         super().closeEvent(event)
 
 

@@ -44,6 +44,7 @@ _NORMALIZE_STEPS = [
     (re.compile(r"(?<![a-zA-Z])pi(?![a-zA-Z])"), "π"),   # 手输 pi
     (re.compile(r"(?<![a-zA-Z])phi(?![a-zA-Z])"), "φ"),  # 手输 phi
     (re.compile(r"(?<![a-zA-Z])tau(?![a-zA-Z])"), "τ"),  # 手输 tau
+    (re.compile(r"(?<![a-zA-Z])theta(?![a-zA-Z])"), "θ"),  # 手输 theta
     (re.compile(r"×|·|✕"), "*"),
     (re.compile(r"÷|∕"), "/"),
     (re.compile(r"−|–|—"), "-"),            # 各类横线统一为减号
@@ -65,7 +66,7 @@ def _normalize(expr: str) -> str:
 _TOKEN_RE = re.compile(
     r"""
       (?P<num>\d+\.\d*|\.\d+|\d+)        # 数字(支持 .5 / 5. / 5.2)
-    | (?P<name>[A-Za-z₂]+)               # 标识符(函数 / 变量 / mod)
+    | (?P<name>[A-Za-z₂θ]+)              # 标识符(函数 / 变量 / mod)
     | (?P<const>[πφτ])                   # 单字符常量
     | (?P<sqrt>√)                        # 平方根符号(按函数名处理)
     | (?P<sym>[-+*/^(),!])               # 运算符与括号
@@ -100,6 +101,8 @@ def _tokenize(s: str) -> list[tuple[str, object]]:
                 tokens.append(("op", name))
             elif name in _VARIABLES:
                 tokens.append(("var", name))
+            elif len(name) == 1:
+                tokens.append(("var", name))     # 单字母视为变量(绘图用 x/y/t/θ 等)
             else:
                 tokens.append(("func", name))   # 是否为合法函数在语法/求值层校验
         elif m.lastgroup == "const":
@@ -315,7 +318,9 @@ BACKSPACE_TOKENS = sorted(
 # 递归下降解析器
 # ---------------------------------------------------------------------------
 class _Parser:
-    """文法(自上而下):
+    """递归下降,生成语法树(节点为元组)
+
+    文法(自上而下):
 
     expr    := term  (('+'|'-') term)*
     term    := unary (('*'|'/'|'mod' unary) | 隐式乘法 unary)*
@@ -323,13 +328,15 @@ class _Parser:
     power   := postfix ('^' unary)?          # 右结合,−2^2 = −(2^2)
     postfix := primary ('!')*
     primary := num | const | var | '(' expr ')' | func '(' args ')' | func unary
+
+    节点形式:
+      ("num", 值) ("const", 名) ("var", 名)
+      ("bin", 运算符, 左, 右) ("neg", 节点) ("fact", 节点) ("call", 函数名, 参数元组)
     """
 
-    def __init__(self, tokens: list[tuple[str, object]], angle: str, env: dict[str, float]) -> None:
+    def __init__(self, tokens: list[tuple[str, object]]) -> None:
         self._tokens = tokens
         self._pos = 0
-        self._angle = angle
-        self._env = env
 
     # ---- 游标工具 ----
     def _peek(self) -> tuple[str, object] | None:
@@ -343,108 +350,95 @@ class _Parser:
         return tok
 
     # ---- 各层级 ----
-    def parse(self) -> float:
-        value = self._expr()
+    def parse(self) -> tuple:
+        node = self._expr()
         if self._pos != len(self._tokens):
             raise CalcError("语法错误")
-        return value
+        return node
 
-    def _expr(self) -> float:
-        value = self._term()
+    def _expr(self) -> tuple:
+        node = self._term()
         while True:
             tok = self._peek()
             if tok is not None and tok[0] == "op" and tok[1] in ("+", "-"):
                 self._pos += 1
-                rhs = self._term()
-                value = value + rhs if tok[1] == "+" else value - rhs
+                node = ("bin", tok[1], node, self._term())
             else:
-                return value
+                return node
 
-    def _term(self) -> float:
-        value = self._unary()
+    def _term(self) -> tuple:
+        node = self._unary()
         while True:
             tok = self._peek()
             if tok is None:
-                return value
+                return node
             kind, val = tok
-            if kind == "op" and val in ("*", "/"):
+            if kind == "op" and val in ("*", "/", "mod"):
                 self._pos += 1
-                rhs = self._unary()
-                if val == "*":
-                    value *= rhs
-                else:
-                    if rhs == 0:
-                        raise CalcError("除数不能为零")
-                    value /= rhs
-            elif kind == "op" and val == "mod":
-                self._pos += 1
-                rhs = self._unary()
-                if rhs == 0:
-                    raise CalcError("除数不能为零")
-                value %= rhs              # Python 语义:结果符号随除数
+                node = ("bin", val, node, self._unary())
             elif kind in ("num", "const", "var", "func", "lp"):
                 # 隐式乘法:2π、3(4+5)、2sin(30)、)( 等
-                value *= self._unary()
+                node = ("bin", "*", node, self._unary())
             else:
-                return value
+                return node
 
-    def _unary(self) -> float:
+    def _unary(self) -> tuple:
         tok = self._peek()
         if tok is not None and tok[0] == "op" and tok[1] in ("-", "+"):
             self._pos += 1
-            value = self._unary()
-            return -value if tok[1] == "-" else value
+            node = self._unary()
+            return ("neg", node) if tok[1] == "-" else node
         return self._power()
 
-    def _power(self) -> float:
-        base = self._postfix()
+    def _power(self) -> tuple:
+        node = self._postfix()
         tok = self._peek()
         if tok is not None and tok[0] == "op" and tok[1] == "^":
             self._pos += 1
-            exp = self._unary()           # 右结合:2^3^2 = 2^(3^2)
-            return _fn_pow_exp(base, exp)
-        return base
+            return ("bin", "^", node, self._unary())   # 右结合:2^3^2 = 2^(3^2)
+        return node
 
-    def _postfix(self) -> float:
-        value = self._primary()
+    def _postfix(self) -> tuple:
+        node = self._primary()
         while True:
             tok = self._peek()
             if tok is not None and tok[0] == "fact":
                 self._pos += 1
-                value = _fn_factorial(value, self._angle)
+                node = ("fact", node)
             else:
-                return value
+                return node
 
-    def _primary(self) -> float:
+    def _primary(self) -> tuple:
         tok = self._next()
         kind, val = tok
         if kind == "num":
-            return float(val)
+            return ("num", float(val))
         if kind == "lp":
-            value = self._expr()
+            node = self._expr()
             nxt = self._next()
             if nxt[0] != "rp":
                 raise CalcError("括号不匹配")
-            return value
+            return node
         if kind == "const":
-            return _CONSTANTS[val]
+            return ("const", val)
         if kind == "var":
-            return self._env[val]
+            return ("var", val)
         if kind == "func":
             name = val
             if name not in _FUNCTIONS:
                 raise CalcError(f"未知函数:{name}")
-            lo, hi, fn = _FUNCTIONS[name]
+            lo, hi, _fn = _FUNCTIONS[name]
             # 带括号:解析参数列表;不带括号:绑定紧随其后的一个一元项(如 sin30)
             nxt = self._peek()
             if nxt is not None and nxt[0] == "lp":
                 self._pos += 1
-                args: list[float] = []
+                args: list[tuple] = []
                 if self._peek() is not None and self._peek()[0] == "rp":
                     self._pos += 1            # 空参数列表
                 else:
                     args.append(self._expr())
-                    while self._peek() is not None and self._peek()[0] == "op" and self._peek()[1] == ",":
+                    while (self._peek() is not None and self._peek()[0] == "op"
+                           and self._peek()[1] == ","):
                         self._pos += 1
                         args.append(self._expr())
                     end = self._next()
@@ -454,26 +448,170 @@ class _Parser:
                 args = [self._unary()]
             if not (lo <= len(args) <= hi):
                 raise CalcError(f"{name} 参数个数错误")
-            result = fn(args, self._angle)
-            return float(result)
+            return ("call", name, tuple(args))
         raise CalcError("语法错误")
+
+
+# ---------------------------------------------------------------------------
+# 语法树:解释执行(单次求值)与编译(批量快速求值)
+# ---------------------------------------------------------------------------
+def _build_ast(expr: str) -> tuple:
+    """归一化 + 词法分析 + 语法分析,返回语法树"""
+    s = _normalize(expr)
+    if not s.strip():
+        raise CalcError("表达式为空")
+    return _Parser(_tokenize(s)).parse()
+
+
+def _eval_node(node: tuple, env: dict[str, float], angle: str) -> float:
+    """解释执行语法树"""
+    kind = node[0]
+    if kind == "num":
+        return node[1]
+    if kind == "const":
+        return _CONSTANTS[node[1]]
+    if kind == "var":
+        try:
+            return env[node[1]]
+        except KeyError:
+            raise CalcError(f"未定义的变量:{node[1]}") from None
+    if kind == "neg":
+        return -_eval_node(node[1], env, angle)
+    if kind == "fact":
+        return _fn_factorial(_eval_node(node[1], env, angle), angle)
+    if kind == "bin":
+        op = node[1]
+        left = _eval_node(node[2], env, angle)
+        right = _eval_node(node[3], env, angle)
+        if op == "+":
+            return left + right
+        if op == "-":
+            return left - right
+        if op == "*":
+            return left * right
+        if op == "/":
+            if right == 0:
+                raise CalcError("除数不能为零")
+            return left / right
+        if op == "mod":
+            if right == 0:
+                raise CalcError("除数不能为零")
+            return left % right
+        return _fn_pow_exp(left, right)
+    # call
+    _lo, _hi, fn = _FUNCTIONS[node[1]]
+    args = [_eval_node(a, env, angle) for a in node[2]]
+    return float(fn(args, angle))
+
+
+def _compile_node(node: tuple, angle: str):
+    """把语法树编译成闭包 fn(env) -> float
+
+    绘图批量采样时每个点只做若干次闭包调用,比反复解释语法树快一个数量级。
+    """
+    kind = node[0]
+    if kind == "num":
+        value = node[1]
+        return lambda env: value
+    if kind == "const":
+        value = _CONSTANTS[node[1]]
+        return lambda env: value
+    if kind == "var":
+        name = node[1]
+
+        def get_var(env, _name=name):
+            try:
+                return env[_name]
+            except KeyError:
+                raise CalcError(f"未定义的变量:{_name}") from None
+        return get_var
+    if kind == "neg":
+        sub = _compile_node(node[1], angle)
+        return lambda env: -sub(env)
+    if kind == "fact":
+        sub = _compile_node(node[1], angle)
+        return lambda env: _fn_factorial(sub(env), angle)
+    if kind == "bin":
+        op = node[1]
+        left = _compile_node(node[2], angle)
+        right = _compile_node(node[3], angle)
+        if op == "+":
+            return lambda env: left(env) + right(env)
+        if op == "-":
+            return lambda env: left(env) - right(env)
+        if op == "*":
+            return lambda env: left(env) * right(env)
+        if op == "/":
+            def divide(env):
+                b = right(env)
+                if b == 0:
+                    raise CalcError("除数不能为零")
+                return left(env) / b
+            return divide
+        if op == "mod":
+            def modulo(env):
+                b = right(env)
+                if b == 0:
+                    raise CalcError("除数不能为零")
+                return left(env) % b
+            return modulo
+        return lambda env: _fn_pow_exp(left(env), right(env))
+    # call
+    fn = _FUNCTIONS[node[1]][2]
+    sub_args = [_compile_node(a, angle) for a in node[2]]
+    if not sub_args:
+        return lambda env: float(fn([], angle))
+
+    def call(env, _fn=fn, _args=sub_args, _angle=angle):
+        return float(_fn([f(env) for f in _args], _angle))
+    return call
 
 
 # ---------------------------------------------------------------------------
 # 对外接口
 # ---------------------------------------------------------------------------
-def evaluate(expr: str, *, angle: str = "DEG", ans: float = 0.0, mem: float = 0.0) -> float:
-    """求值一个表达式字符串,返回 float;失败抛 CalcError"""
-    s = _normalize(expr)
-    if not s:
-        raise CalcError("表达式为空")
-    tokens = _tokenize(s)
-    value = _Parser(tokens, angle, {"ans": ans, "m": mem}).parse()
+def evaluate(expr: str, *, angle: str = "DEG", ans: float = 0.0, mem: float = 0.0,
+             extra: dict[str, float] | None = None) -> float:
+    """求值一个表达式字符串,返回 float;失败抛 CalcError
+
+    extra 用于注入额外变量(绘图时传入 x / y / t / θ 等)
+    """
+    node = _build_ast(expr)
+    env: dict[str, float] = {"ans": ans, "m": mem}
+    if extra:
+        env.update(extra)
+    value = _eval_node(node, env, angle)
     if math.isnan(value):
         raise CalcError("结果未定义")
     if math.isinf(value):
         raise CalcError("结果超出表示范围")
     return value
+
+
+def compile_expression(expr: str, *, angle: str = "DEG"):
+    """把表达式编译成闭包 fn(env) -> float,供绘图等批量采样使用"""
+    return _compile_node(_build_ast(expr), angle)
+
+
+def expression_variables(expr: str) -> set[str]:
+    """返回表达式中出现的变量名(绘图时用于判断 x / y / t / θ)"""
+    names: set[str] = set()
+
+    def walk(node: tuple) -> None:
+        kind = node[0]
+        if kind == "var":
+            names.add(node[1])
+        elif kind == "bin":
+            walk(node[2])
+            walk(node[3])
+        elif kind in ("neg", "fact"):
+            walk(node[1])
+        elif kind == "call":
+            for arg in node[2]:
+                walk(arg)
+
+    walk(_build_ast(expr))
+    return names
 
 
 # 上标数字(科学计数显示用)
@@ -575,6 +713,15 @@ def _selftest() -> None:  # pragma: no cover
         ("root(−27,3)", -3, {}),
         ("2sin30cos30", 1 * _m.cos(_m.radians(30)), {}),
         ("e^1", _m.e, {}),
+        # ---- 变量注入(绘图用)----
+        ("x^2+1", 5, {"extra": {"x": 2}}),
+        ("y+1", 4, {"extra": {"y": 3}}),
+        ("t*2", 6, {"extra": {"t": 3}}),
+        ("x^2+y^2", 25, {"extra": {"x": 3, "y": 4}}),
+        ("sin(θ)", 0.5, {"angle": "RAD", "extra": {"θ": _m.pi / 6}}),
+        ("theta", 1.0, {"angle": "RAD", "extra": {"θ": 1.0}}),
+        ("2θ", 2.0, {"angle": "RAD", "extra": {"θ": 1.0}}),
+        ("x", None, {}),                   # 未定义变量应报错
     ]
 
     failed = 0
@@ -599,6 +746,37 @@ def _selftest() -> None:  # pragma: no cover
         failed += 1
     except CalcError:
         pass
+
+    # ---- 编译求值(绘图采样路径)----
+    try:
+        f = compile_expression("x^2-2x-3", angle="RAD")
+        if not _m.isclose(f({"x": 4.0}), 5.0):
+            print("[FAIL] compile_expression x^2-2x-3 在 x=4 应为 5")
+            failed += 1
+        g = compile_expression("sin(x)+cos(y)", angle="RAD")
+        if not _m.isclose(g({"x": 0.0, "y": 0.0}), 1.0):
+            print("[FAIL] compile_expression sin(x)+cos(y) 在原点应为 1")
+            failed += 1
+        h = compile_expression("1/x", angle="RAD")
+        try:
+            h({"x": 0.0})
+            print("[FAIL] 编译后的 1/x 在 x=0 应报除零")
+            failed += 1
+        except CalcError:
+            pass
+    except CalcError as err:
+        print(f"[FAIL] compile_expression 意外报错:{err}")
+        failed += 1
+
+    if expression_variables("x^2+y^2") != {"x", "y"}:
+        print("[FAIL] expression_variables 未正确识别 x/y")
+        failed += 1
+    if expression_variables("sin(2)") != set():
+        print("[FAIL] expression_variables 对无变量表达式应返回空集")
+        failed += 1
+    if expression_variables("1+cos(θ)") != {"θ"}:
+        print("[FAIL] expression_variables 未识别 θ")
+        failed += 1
 
     # 格式化
     fmt_cases = [

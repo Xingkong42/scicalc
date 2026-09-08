@@ -9,7 +9,7 @@ from __future__ import annotations
 # ---------------------------------------------------------------------------
 # 色板
 # ---------------------------------------------------------------------------
-THEMES: dict[str, dict[str, str]] = {
+THEMES: dict[str, dict[str, object]] = {
     "light": {
         # 基础
         "bg":       "#F5F5F7",   # 窗口背景
@@ -41,6 +41,13 @@ THEMES: dict[str, dict[str, str]] = {
         "hist_bg":    "#FCFCFD",
         "hist_hover": "#F1F1F5",
         "scroll":     "#C9C9CE",
+        # 绘图区
+        "plot_bg":    "#FFFFFF",   # 画布背景
+        "grid":       "#EDEDF2",   # 网格线
+        "axis":       "#B4B4BB",   # 坐标轴
+        "tick_text":  "#8E8E93",   # 刻度数字
+        "curve_colors": ("#0071E3", "#E8730C", "#2E9E5B", "#B44BD6",
+                         "#D93A2B", "#0E9AA7", "#8B6B2E", "#5B62D6"),
     },
     "dark": {
         "bg":       "#1C1C1E",
@@ -70,6 +77,13 @@ THEMES: dict[str, dict[str, str]] = {
         "hist_bg":    "#232325",
         "hist_hover": "#2C2C2E",
         "scroll":     "#4A4A4D",
+        # 绘图区
+        "plot_bg":    "#232325",
+        "grid":       "#333336",
+        "axis":       "#58585C",
+        "tick_text":  "#98989F",
+        "curve_colors": ("#0A84FF", "#FF9F0A", "#30D158", "#BF5AF2",
+                         "#FF453A", "#64D2FF", "#AC8E68", "#7D7AFF"),
     },
 }
 
@@ -185,6 +199,29 @@ QPushButton:flat {{ outline: none; }}
 
 /* ---------- 分隔线 ---------- */
 #DividerV, #DividerH {{ background: {c['divider']}; }}
+
+/* ---------- 图像窗口 ---------- */
+#GraphInput {{
+    background: {c['plot_bg']};
+    border: 1px solid {c['divider']};
+    border-radius: 10px;
+    padding: 6px 8px;
+    color: {c['text']};
+    font-family: Consolas, "Cascadia Mono", "Microsoft YaHei UI", monospace;
+    font-size: 13px;
+    selection-background-color: {c['accent']};
+    selection-color: #FFFFFF;
+}}
+#GraphInput:focus {{ border: 1px solid {c['accent']}; }}
+#GraphStatus {{ color: {c['text2']}; font-size: 12px; }}
+#GraphHint   {{ color: {c['text3']}; font-size: 11px; }}
+
+#GraphBtn {{
+    background: {c['fn_bg']};    color: {c['fn_text']};   font-size: 12px;
+    border-radius: 9px;          padding: 7px 10px;
+}}
+#GraphBtn:hover   {{ background: {c['fn_hover']}; color: {c['text']}; }}
+#GraphBtn:pressed {{ background: {c['fn_press']}; }}
 
 /* ---------- 滚动条 ---------- */
 QScrollBar:vertical {{

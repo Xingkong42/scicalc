@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt
@@ -113,6 +114,18 @@ def make_glyph_icon(kind: str, color: str, size: int = 64) -> QIcon:
         p.drawLine(QPointF(27, 15), QPointF(37, 15))
         p.drawLine(QPointF(28, 30), QPointF(28, 44))
         p.drawLine(QPointF(36, 30), QPointF(36, 44))
+    elif kind == "graph":
+        # 图像:坐标轴 + 正弦曲线
+        p.drawLine(QPointF(12, 12), QPointF(12, 52))
+        p.drawLine(QPointF(12, 52), QPointF(54, 52))
+        curve = QPainterPath()
+        curve.moveTo(QPointF(14, 32))
+        for i in range(1, 41):
+            t = i / 40.0
+            x = 14 + t * 38
+            y = 32 - 16 * math.sin(t * 2 * math.pi)
+            curve.lineTo(QPointF(x, y))
+        p.drawPath(curve)
 
     p.end()
     return QIcon(pm)
