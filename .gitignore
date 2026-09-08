@@ -1,0 +1,20 @@
+# Python 字节码与缓存
+__pycache__/
+*.py[cod]
+
+# 虚拟环境
+.venv/
+venv/
+
+# 构建产物
+build/
+dist/
+*.egg-info/
+
+# IDE 配置
+.idea/
+.vscode/
+
+# 系统文件
+Thumbs.db
+.DS_Store
